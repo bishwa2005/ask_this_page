@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Ask This Page</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="header-icon">🤖</div>
+      <h3>Ask This Page</h3>
+      <button id="themeToggle" class="icon-button" title="Toggle theme">
+        <span class="theme-icon">🌙</span>
+      </button>
+    </div>
+    
+    <button id="processButton" class="primary-button">
+      <span class="button-icon">📄</span>
+      <span class="button-text">Process This Page</span>
+      <span class="loader"></span>
+    </button>
+    
+    <div id="status" class="status-badge">
+      <span class="status-dot"></span>
+      <span class="status-text">Not Processed</span>
+    </div>
+    
+    <div class="quick-prompts" id="quickPromptsContainer" style="display: none;">
+      <button class="quick-prompt-btn" data-prompt="Provide a concise summary of this page.">
+        <span class="prompt-icon">📝</span>
+        Summarize
+      </button>
+      <button class="quick-prompt-btn" data-prompt="List the key topics or arguments mentioned.">
+        <span class="prompt-icon">🔑</span>
+        Key Topics
+      </button>
+    </div>
+    
+    <div id="chat-window">
+      <div class="empty-state">
+        <div class="empty-icon">💬</div>
+        <p>Process the page to start chatting</p>
+      </div>
+    </div>
+    
+    <div class="input-area">
+      <input type="text" id="questionInput" placeholder="Ask a question..." disabled>
+      <button id="askButton" class="send-button" disabled title="Send message">
+        <span class="send-icon">➤</span>
+      </button>
+    </div>
+  </div>
+  
+  <script src="marked.min.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

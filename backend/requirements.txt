@@ -1,0 +1,9 @@
+flask
+flask-cors
+langchain-google-genai
+langchain
+beautifulsoup4
+faiss-cpu
+youtube-transcript-api
+requests
+pypdf
