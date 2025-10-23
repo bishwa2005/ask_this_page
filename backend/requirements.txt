@@ -1,12 +1,12 @@
 flask
 flask-cors
-langchain-google-genai
-langchain
+python-dotenv
 beautifulsoup4
-faiss-cpu
 youtube-transcript-api
 requests
 pypdf
+langchain-google-genai
+langchain
+faiss-cpu
 gunicorn
-python-dotenv
 langchain-community
