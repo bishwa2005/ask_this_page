@@ -12,17 +12,19 @@ from bs4 import BeautifulSoup
 from pypdf import PdfReader
 from youtube_transcript_api import YouTubeTranscriptApi, NoTranscriptFound, TranscriptsDisabled
 
-# --- CORRECTED LANGCHAIN IMPORTS ---
+# --- THIS IS THE CORRECTED IMPORT BLOCK ---
 from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
 from langchain_community.vectorstores import FAISS
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain.chains import ConversationalRetrievalChain
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.messages import HumanMessage, AIMessage
-# --- END OF IMPORTS ---
+# --- END OF CORRECTED IMPORTS ---
 
 
 # --- 1. Configuration ---
+# (Your .env file handles the key)
+
 # --- 2. App Initialization ---
 app = Flask(__name__)
 CORS(app) 
@@ -34,7 +36,7 @@ embeddings = None
 text_splitter = None
 youtube_api_client = YouTubeTranscriptApi()
 
-# --- 4. Custom Prompt Template (Same as before) ---
+# --- 4. Custom Prompt Template ---
 SYSTEM_TEMPLATE = """
 You are a helpful assistant. Your primary goal is to answer questions about the webpage, PDF, or video transcript context provided.
 First, try to answer the user's question based *only* on the context document provided.
@@ -46,9 +48,8 @@ Here is the context:
 {context}
 """
 
-# --- 5. Initialize LLM & Embeddings (Same as before) ---
+# --- 5. Initialize LLM & Embeddings ---
 try:
-    # Note: I saw you updated to 'gemini-2.5-flash', which is great!
     llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite", temperature=0.3) 
     embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
@@ -56,7 +57,7 @@ except Exception as e:
     print(f"Error initializing Google AI models: {e}")
 
 
-# --- 6. Helper Function for Translation (Same as before) ---
+# --- 6. Helper Function for Translation ---
 def get_english_transcript(transcript_text):
     if not llm: return transcript_text 
     try:
@@ -72,7 +73,7 @@ def get_english_transcript(transcript_text):
         return transcript_text
 
 
-# --- 7. "Process Webpage" Endpoint (Same as before) ---
+# --- 7. "Process Webpage" Endpoint ---
 @app.route('/process_webpage', methods=['POST'])
 def process_webpage():
     global vector_store 
@@ -92,7 +93,7 @@ def process_webpage():
         return jsonify({"error": str(e)}), 500
 
 
-# --- 8. "Process YouTube" Endpoint (Same as before) ---
+# --- 8. "Process YouTube" Endpoint ---
 @app.route('/process_youtube', methods=['POST'])
 def process_youtube():
     global vector_store, youtube_api_client
@@ -119,7 +120,7 @@ def process_youtube():
         print(f"Error processing YouTube video: {e}")
         return jsonify({"error": str(e)}), 500
 
-# --- 9. NEW "Process PDF" Endpoint ---
+# --- 9. "Process PDF" Endpoint ---
 @app.route('/process_pdf', methods=['POST'])
 def process_pdf():
     global vector_store
@@ -133,11 +134,9 @@ def process_pdf():
 
         print(f"Fetching PDF from: {pdf_url}")
         
-        # Download the PDF
         response = requests.get(pdf_url)
-        response.raise_for_status() # Raise error if download failed
+        response.raise_for_status() 
 
-        # Read PDF from in-memory content
         pdf_file = io.BytesIO(response.content)
         reader = PdfReader(pdf_file)
         
@@ -148,7 +147,6 @@ def process_pdf():
         if not pdf_text:
             return jsonify({"error": "Could not extract text from this PDF."}), 400
 
-        # Process the text
         docs = text_splitter.split_text(pdf_text)
         vector_store = FAISS.from_texts(docs, embeddings) 
         
@@ -160,7 +158,7 @@ def process_pdf():
         return jsonify({"error": f"Failed to process PDF. Is the URL correct and public? {e}"}), 500
 
 
-# --- 10. "Ask Question" Endpoint (Same as before) ---
+# --- 10. "Ask Question" Endpoint ---
 @app.route('/ask', methods=['POST'])
 def ask_question():
     global vector_store, llm
@@ -183,6 +181,6 @@ def ask_question():
         print(f"Error asking question: {e}")
         return jsonify({"error": str(e)}), 500
 
-# --- 11. Run the App (Same as before) ---
+# --- 11. Run the App ---
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=False)
