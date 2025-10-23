@@ -4,19 +4,6 @@ os.environ["KMP_DUPLICATE_LIB_OK"]="TRUE"
 from dotenv import load_dotenv
 load_dotenv() # This loads the GOOGLE_API_KEY from your .env file
 
-from flask import Flask, request, jsonify
-from flask_cors import CORS
-from bs4 import BeautifulSoup
-
-from youtube_transcript_api import YouTubeTranscriptApi, NoTranscriptFound, TranscriptsDisabled
-
-# --- New Imports for PDF ---
-import os
-os.environ["KMP_DUPLICATE_LIB_OK"]="TRUE"
-
-from dotenv import load_dotenv
-load_dotenv() # This loads the GOOGLE_API_KEY from your .env file
-
 import io 
 import requests
 from flask import Flask, request, jsonify
@@ -25,12 +12,15 @@ from bs4 import BeautifulSoup
 from pypdf import PdfReader
 from youtube_transcript_api import YouTubeTranscriptApi, NoTranscriptFound, TranscriptsDisabled
 
+# --- CORRECTED LANGCHAIN IMPORTS ---
 from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
-from langchain_community.vectorstores import FAISS  # <-- THIS IS THE FIX
+from langchain_community.vectorstores import FAISS
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain.chains import ConversationalRetrievalChain
-from langchain.prompts import ChatPromptTemplate
-from langchain.schema import HumanMessage, AIMessage
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.messages import HumanMessage, AIMessage
+# --- END OF IMPORTS ---
+
 
 # --- 1. Configuration ---
 # --- 2. App Initialization ---
