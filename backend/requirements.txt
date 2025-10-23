@@ -9,3 +9,4 @@ requests
 pypdf
 gunicorn
 python-dotenv
+langchain-community
