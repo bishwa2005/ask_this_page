@@ -10,3 +10,4 @@ langchain
 faiss-cpu
 gunicorn
 langchain-community
+langchain-text-splitters
