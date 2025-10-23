@@ -8,3 +8,4 @@ youtube-transcript-api
 requests
 pypdf
 gunicorn
+python-dotenv
