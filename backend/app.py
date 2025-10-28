@@ -2,7 +2,7 @@ import os
 os.environ["KMP_DUPLICATE_LIB_OK"]="TRUE"
 
 from dotenv import load_dotenv
-load_dotenv() # This loads the GOOGLE_API_KEY from your .env file
+load_dotenv()  
 
 import io 
 import requests
@@ -12,7 +12,7 @@ from bs4 import BeautifulSoup
 from pypdf import PdfReader
 from youtube_transcript_api import YouTubeTranscriptApi, NoTranscriptFound, TranscriptsDisabled
 
-# --- THIS IS THE CORRECTED IMPORT BLOCK ---
+
 from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
 from langchain_community.vectorstores import FAISS
 from langchain_text_splitters import RecursiveCharacterTextSplitter
