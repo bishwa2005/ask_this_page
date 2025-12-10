@@ -218,7 +218,7 @@ def ask_question():
             elif item.get("type") == "ai":
                 chat_history.append(AIMessage(content=item.get("content")))
 
-        prompt = ChatPromptTemplate.from_messages([
+        qa_prompt = ChatPromptTemplate.from_messages([
             ("system", SYSTEM_TEMPLATE),
             ("human", "{question}")
         ])
@@ -226,10 +226,16 @@ def ask_question():
         qa_chain = ConversationalRetrievalChain.from_llm(
             llm=llm,
             retriever=vector_store.as_retriever(),
-            combine_docs_chain_kwargs={"prompt": prompt},
+            combine_docs_chain_kwargs={
+                "prompt": qa_prompt,
+                "document_variable_name": "context"
+            }
         )
 
-        response = qa_chain.invoke({"question": question, "chat_history": chat_history})
+        response = qa_chain.invoke({
+            "question": question,
+            "chat_history": chat_history
+        })
 
         return jsonify({"answer": response.get("answer")})
 
