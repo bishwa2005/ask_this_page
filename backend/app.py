@@ -226,7 +226,10 @@ def ask_question():
             combine_docs_chain_kwargs={
                 "prompt": qa_prompt,
                 "document_variable_name": "context"
-            }
+            },
+            return_source_documents=False,
+            input_key="question",
+            output_key="answer"
         )
 
         response = qa_chain.invoke({
@@ -234,7 +237,7 @@ def ask_question():
             "chat_history": chat_history
         })
 
-        return jsonify({"answer": response.get("answer")})
+        return jsonify({"answer": response})
 
     except Exception as e:
         print("Ask error:", e)
