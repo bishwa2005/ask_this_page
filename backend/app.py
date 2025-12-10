@@ -20,7 +20,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.messages import HumanMessage, AIMessage
 
 
-# -------------------- App Setup ------------------------
+# ------------- Flask Init -------------
 app = Flask(__name__)
 CORS(app)
 
@@ -29,59 +29,63 @@ llm = None
 embeddings = None
 text_splitter = None
 
-# -------------------- Load Models ----------------------
+# ------------- Model Setup -------------
 try:
     llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite", temperature=0.3)
     embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
 except Exception as e:
-    print(f"Error initializing models: {e}")
+    print("Model init error:", e)
 
-# -------------------- Prompt Template ------------------
+
+# ------------- System Prompt -------------
 SYSTEM_TEMPLATE = """
-You are a helpful assistant. Your primary goal is to answer questions about the webpage, PDF, or video transcript context provided.
-First, try to answer the user's question based *only* on the context document provided.
-If the information *is* in the context, provide a detailed answer based on it.
-If the information is *not* in the context, politely tell the user you couldn't find it on the page,
-and then try to answer their question as a general AI assistant.
-Format your answer cleanly.
+You are a helpful assistant.
+You answer questions using ONLY the provided document context.
+If an answer is not in the document, say so politely and then attempt a helpful guess.
+Keep answers clear and well formatted.
+
+Context:
+{context}
 """
 
 
-# -------------------- Language Detection + Translation ------------------
+# ------------- Language Detection + Translation -------------
 def get_english_transcript(transcript_text):
     if not llm:
         return transcript_text
+
     try:
-        prompt = f"Detect the language of this text. Respond with ISO code only: '{transcript_text[:400]}'"
-        lang_code = llm.invoke(prompt).content.strip().lower()
+        detect_prompt = (
+            f"Detect language. Output only ISO code: '{transcript_text[:300]}'"
+        )
+        lang_code = llm.invoke(detect_prompt).content.strip().lower()
 
         if "en" in lang_code:
             return transcript_text
 
-        translation_prompt = f"Translate this text to English: '{transcript_text}'"
+        translation_prompt = f"Translate to English: '{transcript_text}'"
         return llm.invoke(translation_prompt).content
 
     except Exception as e:
-        print("Translation failure:", e)
+        print("Translation error:", e)
         return transcript_text
 
 
-# -------------------- Health Check ----------------------
+# ------------- Health Check -------------
 @app.route("/")
-def health_check():
+def health():
     return "Backend running", 200
 
 
-# -------------------- Process Web Page ------------------
+# ------------- Web Page Processing -------------
 @app.route("/process_webpage", methods=["POST"])
 def process_webpage():
     global vector_store
-    if not llm:
-        return jsonify({"error": "Models not initialized."}), 500
     try:
         data = request.json
         page_content = data.get("content", "")
+
         if not page_content:
             return jsonify({"error": "No content provided"}), 400
 
@@ -91,84 +95,74 @@ def process_webpage():
         docs = text_splitter.split_text(text)
         vector_store = FAISS.from_texts(docs, embeddings)
 
-        print("Webpage processed!")
         return jsonify({"status": "ready", "message": f"Processed {len(text)} characters."})
 
     except Exception as e:
-        print("Webpage processing error:", e)
+        print("Web error:", e)
         return jsonify({"error": str(e)}), 500
 
 
-# -------------------- Process YouTube ------------------
+# ------------- YouTube Processing -------------
 @app.route("/process_youtube", methods=["POST"])
 def process_youtube():
     global vector_store
-    if not llm:
-        return jsonify({"error": "Models not initialized."}), 500
 
     try:
         data = request.json
         video_id = data.get("videoId", "")
+
         if not video_id:
             return jsonify({"error": "No YouTube Video ID provided"}), 400
 
-        print(f"Fetching transcript for video: {video_id}")
+        print(f"Fetching transcript for: {video_id}")
 
         try:
             transcript_data = YouTubeTranscriptApi.get_transcript(
-                video_id,
-                languages=["en", "hi", "es", "de"]
+                video_id, languages=["en", "hi", "es", "de"]
             )
             raw_transcript = " ".join([item["text"] for item in transcript_data])
 
         except Exception as e:
-            print("Transcript unavailable, switching to AI fallback:", e)
+            print("Transcript unavailable. AI fallback activated:", e)
 
             fallback_prompt = f"""
-            YouTube captions for this video are unavailable.
-            You are a video understanding AI.
-            Please generate a summary-like transcript for this video:
-
+            YouTube transcript was blocked/unavailable.
+            Summarize the key spoken content of this video:
             https://www.youtube.com/watch?v={video_id}
 
             Include:
-            - What the speaker is talking about
-            - Key points spoken
-            - Important claims or explanations
-            - Bullet-style summary
+            - What the speaker talks about
+            - Main points explained
+            - Bullet structure
             """
 
             try:
                 raw_transcript = llm.invoke(fallback_prompt).content
-            except Exception as ee:
+            except Exception:
                 return jsonify({
                     "status": "no_transcript",
-                    "message": "Transcript unavailable — AI fallback also failed."
+                    "message": "Transcript unavailable — AI fallback failed."
                 }), 200
 
-        # FIXED function name here
         english_transcript = get_english_transcript(raw_transcript)
 
         docs = text_splitter.split_text(english_transcript)
         vector_store = FAISS.from_texts(docs, embeddings)
 
-        print("YouTube transcript (or fallback) processed successfully!")
         return jsonify({
             "status": "ready",
             "message": f"Processed {len(english_transcript)} characters."
         })
 
     except Exception as e:
-        print("YouTube processing error:", e)
+        print("YouTube error:", e)
         return jsonify({"error": str(e)}), 500
 
 
-# -------------------- Process PDF ------------------
+# ------------- PDF Processing -------------
 @app.route("/process_pdf", methods=["POST"])
 def process_pdf():
     global vector_store
-    if not llm:
-        return jsonify({"error": "Models not initialized."}), 500
 
     try:
         data = request.json
@@ -176,33 +170,36 @@ def process_pdf():
         if not pdf_url:
             return jsonify({"error": "No PDF URL provided"}), 400
 
-        print("Fetching PDF:", pdf_url)
-
         response = requests.get(pdf_url)
         response.raise_for_status()
 
         reader = PdfReader(io.BytesIO(response.content))
         pdf_text = "".join([page.extract_text() + "\n" for page in reader.pages])
 
-        if not pdf_text:
+        if not pdf_text.strip():
             return jsonify({"error": "Could not read text from PDF"}), 400
 
         docs = text_splitter.split_text(pdf_text)
         vector_store = FAISS.from_texts(docs, embeddings)
 
-        return jsonify({"status": "ready", "message": f"Processed {len(pdf_text)} characters."})
+        return jsonify({
+            "status": "ready",
+            "message": f"Processed {len(pdf_text)} characters."
+        })
 
     except Exception as e:
-        print("PDF processing error:", e)
+        print("PDF error:", e)
         return jsonify({"error": str(e)}), 500
 
 
-# -------------------- Ask Question ------------------
+# ------------- Ask Question -------------
 @app.route("/ask", methods=["POST"])
 def ask_question():
     global vector_store, llm
+
     if not vector_store:
         return jsonify({"error": "Page not processed yet."}), 400
+
     try:
         data = request.json
         question = data.get("question", "")
