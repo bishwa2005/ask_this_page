@@ -88,7 +88,7 @@ function sendQuestion(question) {
   
   const thinkingMessage = addMessageToChat('ai', 'Thinking...');
 
-  fetch('http://127.0.0.1:5000/ask', {
+  fetch('https://ask-this-page-1.onrender.com/ask', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ 
@@ -164,14 +164,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
       if (pageUrl.endsWith('.pdf')) {
         addMessageToChat('ai', '📄 Found a PDF! Fetching and reading...');
-        fetchAndProcess('http://127.0.0.1:5000/process_pdf', { pdf_url: pageUrl });
+        fetchAndProcess('https://ask-this-page-1.onrender.com/process_pdf', { pdf_url: pageUrl });
       
       } else if (pageUrl.includes("youtube.com/watch")) {
         const urlParams = new URLSearchParams(new URL(pageUrl).search);
         const videoId = urlParams.get('v');
         if (videoId) {
           addMessageToChat('ai', '🎥 Found a YouTube video! Fetching transcript...');
-          fetchAndProcess('http://127.0.0.1:5000/process_youtube', { videoId: videoId });
+          fetchAndProcess('https://ask-this-page-1.onrender.com/process_youtube', { videoId: videoId });
         } else {
           showError('Could not find YouTube video ID');
         }
@@ -188,7 +188,7 @@ document.addEventListener('DOMContentLoaded', () => {
               return;
             }
             const pageHtml = injectionResults[0].result;
-            fetchAndProcess('http://127.0.0.1:5000/process_webpage', { content: pageHtml });
+            fetchAndProcess('https://ask-this-page-1.onrender.com/process_webpage', { content: pageHtml });
         });
       }
     });

@@ -97,6 +97,37 @@ def process_webpage():
 @app.route('/process_youtube', methods=['POST'])
 def process_youtube():
     global vector_store, youtube_api_client
+    if not llm: 
+        return jsonify({"error": "Models not initialized."}), 500
+    try:
+        data = request.json
+        video_id = data.get('videoId', '')
+        if not video_id:
+            return jsonify({"error": "No YouTube Video ID provided"}), 400
+
+        print(f"Fetching transcript for video ID: {video_id}")
+
+        try:
+            transcript_data = YouTubeTranscriptApi.get_transcript(
+                video_id, languages=['en', 'hi', 'es', 'de']
+            )
+            raw_transcript = " ".join([item['text'] for item in transcript_data])
+        except (NoTranscriptFound, TranscriptsDisabled):
+            return jsonify({"error": "No transcript available for this video."}), 400
+
+        english_transcript = get_english_transcript(raw_transcript)
+
+        docs = text_splitter.split_text(english_transcript)
+        vector_store = FAISS.from_texts(docs, embeddings)
+
+        print("YouTube transcript processed successfully!")
+        return jsonify({"status": "ready", "message": f"Processed {len(english_transcript)} characters."})
+
+    except Exception as e:
+        print(f"Error processing YouTube video: {e}")
+        return jsonify({"error": str(e)}), 500
+
+    global vector_store, youtube_api_client
     if not llm: return jsonify({"error": "Models not initialized."}), 500
     try:
         data = request.json
