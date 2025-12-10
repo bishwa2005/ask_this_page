@@ -115,39 +115,39 @@ def process_youtube():
         print(f"Fetching transcript for video: {video_id}")
 
         try:
-            # Try YouTube transcript API first
             transcript_data = YouTubeTranscriptApi.get_transcript(
-                video_id, languages=["en", "hi", "es", "de"]
+                video_id,
+                languages=["en", "hi", "es", "de"]
             )
             raw_transcript = " ".join([item["text"] for item in transcript_data])
 
         except Exception as e:
-            print("Transcript unavailable, switching to fallback:", e)
+            print("Transcript unavailable, switching to AI fallback:", e)
 
-            # ---- Gemini fallback transcript generation ----
             fallback_prompt = f"""
             YouTube captions for this video are unavailable.
             You are a video understanding AI.
-            Please generate a summary transcript for this video:
+            Please generate a summary-like transcript for this video:
 
             https://www.youtube.com/watch?v={video_id}
 
-            Write:
-            - Key topics covered
-            - Speaker’s key statements
-            - Bullet-point structure
+            Include:
+            - What the speaker is talking about
+            - Key points spoken
+            - Important claims or explanations
+            - Bullet-style summary
             """
 
             try:
-                ai_summary = llm.invoke(fallback_prompt).content
-                raw_transcript = ai_summary
+                raw_transcript = llm.invoke(fallback_prompt).content
             except Exception as ee:
                 return jsonify({
                     "status": "no_transcript",
                     "message": "Transcript unavailable — AI fallback also failed."
                 }), 200
 
-        english_transcript = get_English_transcript(raw_transcript)
+        # FIXED function name here
+        english_transcript = get_english_transcript(raw_transcript)
 
         docs = text_splitter.split_text(english_transcript)
         vector_store = FAISS.from_texts(docs, embeddings)
