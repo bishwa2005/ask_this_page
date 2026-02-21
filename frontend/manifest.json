@@ -9,7 +9,7 @@
   ],
   "host_permissions": [
     "http://127.0.0.1:5000/*",
-    "https://ask-this-page-1.onrender.com",
+    "https://ask-this-page-1.onrender.com/",
     "*://*/*" 
   ],
   "action": {
