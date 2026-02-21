@@ -11,9 +11,6 @@ from youtube_transcript_api._errors import TranscriptsDisabled, NoTranscriptFoun
 from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
 from langchain_community.vectorstores import FAISS
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_core.messages import HumanMessage, AIMessage
-
-os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
 app = Flask(__name__)
 CORS(app)
@@ -44,21 +41,6 @@ If NOT in the context, state "The document doesn't mention this," then provide a
 CONTEXT:
 {context}
 """
-
-def get_english_transcript(transcript_text):
-    """Translate non-English transcripts to English"""
-    if not llm or not transcript_text: 
-        return transcript_text
-    try:
-        # Only translate if text appears to be non-English
-        if not any(ord(c) < 128 for c in transcript_text[:100]):
-            prompt = f"Translate the following to English if it's in another language. Return only the translated text: {transcript_text[:3000]}"
-            result = llm.invoke(prompt)
-            return result.content
-        return transcript_text
-    except Exception as e:
-        print(f"Translation error: {e}")
-        return transcript_text
 
 @app.route("/", methods=["GET"])
 def health():
@@ -160,11 +142,8 @@ def process_youtube():
             
             print(f"Fetched {len(raw_text)} characters of transcript")
             
-            # Translate if necessary
-            english_text = get_english_transcript(raw_text)
-            
             # Create vector store
-            texts = text_splitter.split_text(english_text)
+            texts = text_splitter.split_text(raw_text)
             print(f"Split into {len(texts)} chunks")
             
             vector_store = FAISS.from_texts(texts, embeddings)

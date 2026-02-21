@@ -21,6 +21,11 @@ function fetchAndProcess(endpoint, body) {
     body: JSON.stringify(body),
   })
   .then(async (response) => {
+    const contentType = response.headers.get('content-type');
+    if (!contentType || !contentType.includes('application/json')) {
+      throw new Error('Server is waking up. Please wait 30-60 seconds and try again.');
+    }
+    
     const data = await response.json();
     if (data.error) throw new Error(data.error);
     
@@ -29,8 +34,8 @@ function fetchAndProcess(endpoint, body) {
     addMessageToChat('ai', "✅ I've finished reading. Ask me anything!");
   })
   .catch(error => {
-    statusDiv.textContent = 'Error: Check if server is awake.';
-    addMessageToChat('ai', `❌ Error: ${error.message}. If this is the first time today, wait 30 seconds for the server to wake up.`);
+    statusDiv.textContent = 'Error: Server not ready';
+    addMessageToChat('ai', `❌ ${error.message}`);
   });
 }
 
