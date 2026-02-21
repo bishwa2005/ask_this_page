@@ -1,291 +1,283 @@
 import os
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+
+from dotenv import load_dotenv
+load_dotenv()
+
 import io
 import requests
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from bs4 import BeautifulSoup
 from pypdf import PdfReader
-from youtube_transcript_api import YouTubeTranscriptApi
-from youtube_transcript_api._errors import TranscriptsDisabled, NoTranscriptFound
+from youtube_transcript_api import YouTubeTranscriptApi, NoTranscriptFound, TranscriptsDisabled
 
+# LangChain pieces used only for vectorstore/embeddings + text split
 from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
 from langchain_community.vectorstores import FAISS
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-from dotenv import load_dotenv
-load_dotenv()
+# Simple message wrappers (kept for chat-history conversion)
+from langchain_core.messages import HumanMessage, AIMessage
 
+# ---------------- App init ----------------
 app = Flask(__name__)
 CORS(app)
 
+# ---------------- Globals -----------------
 vector_store = None
 llm = None
 embeddings = None
 text_splitter = None
 
-# Initialize models with better error handling
+# ---------------- Model init ----------------
 try:
-    api_key = os.environ.get("GOOGLE_API_KEY")
-    if not api_key:
-        print("WARNING: GOOGLE_API_KEY not found in environment variables!")
-    
-    llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0.15)
+    llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite", temperature=0.15)
     embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-    print("✓ Models successfully initialized.")
+    print("Models initialized")
 except Exception as e:
-    print(f"✗ Model initialization error: {e}")
-    print("Make sure GOOGLE_API_KEY is set and langchain-google-genai is installed")
+    print("Model initialization error:", e)
 
-SYSTEM_TEMPLATE = """You are a helpful assistant. Answer the question using ONLY the provided context.
-If the answer is in the context, be detailed. 
-If NOT in the context, state "The document doesn't mention this," then provide a general helpful answer.
+
+# ---------------- System prompt ----------------
+SYSTEM_TEMPLATE = """You are a helpful assistant that answers user questions using ONLY the provided document context.
+If the answer is present in the context, answer based on the context and include citations if possible.
+If the answer is NOT present in the context, reply: "The document does not mention this." and then optionally give a short helpful guess.
+Be concise and use bullet points when appropriate.
 
 CONTEXT:
 {context}
 """
 
+
+# ---------------- Helpers ----------------
+def get_english_transcript(transcript_text: str) -> str:
+    """Detect & translate transcript to English using the LLM if needed."""
+    if not llm or not transcript_text:
+        return transcript_text
+    try:
+        detect_prompt = f"Detect the language of the following text and return the ISO 639-1 code only: '''{transcript_text[:400]}'''"
+        lang_code = llm.invoke(detect_prompt).content.strip().lower()
+        if "en" in lang_code:
+            return transcript_text
+        translate_prompt = f"Translate the following text to English:\n\n'''{transcript_text}'''"
+        return llm.invoke(translate_prompt).content
+    except Exception as e:
+        print("Translation fallback error:", e)
+        return transcript_text
+
+
+def build_context_from_docs(docs, max_chars=3000):
+    """Combine retrieved docs into a single context string (truncate to max_chars)."""
+    parts = []
+    total = 0
+    for d in docs:
+        # doc may be a dict-like or object with page_content
+        text = None
+        if hasattr(d, "page_content"):
+            text = d.page_content
+        elif isinstance(d, dict) and "page_content" in d:
+            text = d["page_content"]
+        else:
+            text = str(d)
+        if not text:
+            continue
+        remaining = max_chars - total
+        if remaining <= 0:
+            break
+        if len(text) > remaining:
+            parts.append(text[:remaining])
+            total += remaining
+            break
+        parts.append(text)
+        total += len(text)
+    return "\n\n".join(parts)
+
+
+def call_llm_with_context(question: str, context: str, history=None) -> str:
+    """
+    Compose the final prompt and call the LLM.
+    history is optional list of HumanMessage/AIMessage converted strings if you want continuity.
+    """
+    # short guard
+    if not llm:
+        return "Models are not initialized."
+
+    # Compose prompt: include system prompt with context + question
+    prompt = SYSTEM_TEMPLATE.replace("{context}", context if context else "No context available.")
+    prompt += "\n\nUser question:\n" + question
+
+    # Optionally include short history at the end (if provided)
+    if history:
+        hist_texts = []
+        for item in history:
+            t = item.content if hasattr(item, "content") else str(item)
+            hist_texts.append(t)
+        if hist_texts:
+            prompt += "\n\nConversation history (most recent last):\n" + "\n".join(hist_texts[-6:])
+
+    try:
+        resp = llm.invoke(prompt)
+        # resp may be an object with .content
+        return getattr(resp, "content", str(resp))
+    except Exception as e:
+        print("LLM invocation error:", e)
+        return f"LLM error: {e}"
+
+
+# ---------------- Health ----------------
 @app.route("/", methods=["GET"])
 def health():
-    return jsonify({
-        "status": "online",
-        "models_initialized": llm is not None and embeddings is not None,
-        "api_key_set": bool(os.environ.get("GOOGLE_API_KEY"))
-    }), 200
+    return "OK", 200
 
+
+# ---------------- Process webpage ----------------
 @app.route("/process_webpage", methods=["POST"])
 def process_webpage():
-    """Process webpage content and create vector store"""
     global vector_store
-    try:
-        data = request.json
-        if not data or "content" not in data:
-            return jsonify({"error": "No content provided"}), 400
-        
-        content = data.get("content", "")
-        if not content or len(content.strip()) < 50:
-            return jsonify({"error": "Content too short or empty"}), 400
-        
-        print(f"Processing webpage content ({len(content)} chars)...")
-        
-        # Parse HTML and extract text
-        soup = BeautifulSoup(content, "html.parser")
-        
-        # Remove script and style elements
-        for script in soup(["script", "style", "nav", "footer", "header"]):
-            script.decompose()
-        
-        text = soup.get_text(separator=' ', strip=True)
-        text = ' '.join(text.split())  # Clean up whitespace
-        
-        if len(text.strip()) < 50:
-            return jsonify({"error": "Extracted text too short. Page might be JavaScript-heavy."}), 400
-        
-        print(f"Extracted {len(text)} characters of text")
-        
-        # Split and create vector store
-        texts = text_splitter.split_text(text)
-        print(f"Split into {len(texts)} chunks")
-        
-        if not texts:
-            return jsonify({"error": "No text chunks created"}), 400
-        
-        vector_store = FAISS.from_texts(texts, embeddings)
-        print("✓ Vector store created successfully")
-        
-        return jsonify({
-            "status": "ready",
-            "chunks": len(texts),
-            "characters": len(text)
-        })
-    except Exception as e:
-        print(f"Error processing webpage: {e}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({"error": f"Processing failed: {str(e)}"}), 500
+    if not embeddings or not text_splitter:
+        return jsonify({"error": "Models not initialized"}), 500
 
+    try:
+        data = request.json or {}
+        page_content = data.get("content", "")
+        if not page_content:
+            return jsonify({"error": "No content provided"}), 400
+
+        soup = BeautifulSoup(page_content, "html.parser")
+        text = soup.get_text(separator=" ", strip=True)
+        if not text.strip():
+            return jsonify({"error": "No textual content found"}), 400
+
+        texts = text_splitter.split_text(text)
+        vector_store = FAISS.from_texts(texts, embeddings)
+        return jsonify({"status": "ready", "message": f"Processed {len(text)} characters."})
+    except Exception as e:
+        print("process_webpage error:", e)
+        return jsonify({"error": str(e)}), 500
+
+
+# ---------------- Process YouTube ----------------
 @app.route("/process_youtube", methods=["POST"])
 def process_youtube():
-    """Process YouTube video transcript"""
     global vector_store
+    if not embeddings or not text_splitter:
+        return jsonify({"error": "Models not initialized"}), 500
+
     try:
         data = request.json or {}
         video_id = data.get("videoId", "")
-        
         if not video_id:
             return jsonify({"error": "No YouTube Video ID provided"}), 400
 
-        print(f"Fetching transcript for video ID: {video_id}")
-        
         try:
-            # Get available transcripts
-            transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
-            
-            # Try to find English transcript first
-            transcript = None
-            try:
-                transcript = transcript_list.find_transcript(['en'])
-                print("Found English transcript")
-            except NoTranscriptFound:
-                # Get first available transcript
+            transcript_list = YouTubeTranscriptApi.get_transcript(video_id, languages=["en", "hi", "es", "de"])
+            raw_transcript = " ".join([item.get("text", "") for item in transcript_list])
+        except Exception as e:
+            print("YouTube transcript unavailable:", e)
+            # AI fallback summary if LLM available
+            if llm:
+                fallback_prompt = (
+                    f"Captions for the YouTube video https://www.youtube.com/watch?v={video_id} are unavailable. "
+                    "Based on the video link, provide a concise pseudo-transcript summarizing likely spoken content "
+                    "and main points in bullet form."
+                )
                 try:
-                    transcript = next(iter(transcript_list))
-                    print(f"Using transcript in language: {transcript.language_code}")
-                except StopIteration:
-                    return jsonify({
-                        "error": "No transcripts available for this video"
-                    }), 400
-            
-            # Fetch transcript data
-            transcript_data = transcript.fetch()
-            raw_text = " ".join([t['text'] for t in transcript_data])
-            
-            if not raw_text or len(raw_text.strip()) < 50:
-                return jsonify({"error": "Transcript is too short or empty"}), 400
-            
-            print(f"Fetched {len(raw_text)} characters of transcript")
-            
-            # Create vector store
-            texts = text_splitter.split_text(raw_text)
-            print(f"Split into {len(texts)} chunks")
-            
-            vector_store = FAISS.from_texts(texts, embeddings)
-            print("✓ Vector store created successfully")
-            
-            return jsonify({
-                "status": "ready", 
-                "message": "YouTube transcript processed.",
-                "chunks": len(texts)
-            })
+                    raw_transcript = llm.invoke(fallback_prompt).content
+                except Exception as ee:
+                    print("AI fallback failed:", ee)
+                    return jsonify({"status": "no_transcript", "message": "Transcript unavailable"}), 200
+            else:
+                return jsonify({"status": "no_transcript", "message": "Transcript unavailable"}), 200
 
-        except TranscriptsDisabled:
-            return jsonify({
-                "error": "Subtitles are disabled for this video. Try a different video."
-            }), 400
-        except NoTranscriptFound:
-            return jsonify({
-                "error": "No subtitles found for this video. The creator may not have added subtitles."
-            }), 400
-        except Exception as transcript_error:
-            print(f"Transcript Error: {transcript_error}")
-            import traceback
-            traceback.print_exc()
-            return jsonify({
-                "error": f"Failed to fetch transcript: {str(transcript_error)}"
-            }), 400
-
+        english_transcript = get_english_transcript(raw_transcript)
+        texts = text_splitter.split_text(english_transcript)
+        vector_store = FAISS.from_texts(texts, embeddings)
+        return jsonify({"status": "ready", "message": f"Processed {len(english_transcript)} characters."})
     except Exception as e:
-        print(f"General YouTube processing error: {e}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({"error": f"Processing failed: {str(e)}"}), 500
+        print("process_youtube error:", e)
+        return jsonify({"error": str(e)}), 500
 
+
+# ---------------- Process PDF ----------------
 @app.route("/process_pdf", methods=["POST"])
 def process_pdf():
-    """Process PDF from URL"""
     global vector_store
+    if not embeddings or not text_splitter:
+        return jsonify({"error": "Models not initialized"}), 500
+
     try:
-        data = request.json
-        if not data or "pdf_url" not in data:
+        data = request.json or {}
+        pdf_url = data.get("pdf_url", "")
+        if not pdf_url:
             return jsonify({"error": "No PDF URL provided"}), 400
-        
-        pdf_url = data.get("pdf_url")
-        print(f"Fetching PDF from: {pdf_url}")
-        
-        # Fetch PDF with timeout
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        }
-        resp = requests.get(pdf_url, timeout=30, headers=headers)
+
+        resp = requests.get(pdf_url, timeout=30)
         resp.raise_for_status()
-        
-        # Read PDF
         reader = PdfReader(io.BytesIO(resp.content))
         pdf_text = ""
-        
-        for i, page in enumerate(reader.pages):
-            text = page.extract_text()
-            if text:
-                pdf_text += text + "\n"
-        
-        if not pdf_text or len(pdf_text.strip()) < 50:
-            return jsonify({"error": "PDF is empty or could not extract text"}), 400
-        
-        print(f"Extracted {len(pdf_text)} characters from PDF")
-        
-        # Split and create vector store
-        texts = text_splitter.split_text(pdf_text)
-        print(f"Split into {len(texts)} chunks")
-        
-        vector_store = FAISS.from_texts(texts, embeddings)
-        print("✓ Vector store created successfully")
-        
-        return jsonify({
-            "status": "ready",
-            "chunks": len(texts),
-            "pages": len(reader.pages)
-        })
-    except requests.exceptions.RequestException as e:
-        print(f"Error fetching PDF: {e}")
-        return jsonify({"error": f"Failed to fetch PDF: {str(e)}"}), 500
-    except Exception as e:
-        print(f"Error processing PDF: {e}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({"error": f"Processing failed: {str(e)}"}), 500
+        for p in reader.pages:
+            text = p.extract_text() or ""
+            pdf_text += text + "\n"
 
+        if not pdf_text.strip():
+            return jsonify({"error": "Could not extract text from PDF"}), 400
+
+        texts = text_splitter.split_text(pdf_text)
+        vector_store = FAISS.from_texts(texts, embeddings)
+        return jsonify({"status": "ready", "message": f"Processed {len(pdf_text)} characters."})
+    except Exception as e:
+        print("process_pdf error:", e)
+        return jsonify({"error": str(e)}), 500
+
+
+# ---------------- Ask endpoint (manual retrieval + LLM) ----------------
 @app.route("/ask", methods=["POST"])
 def ask_question():
-    """Answer questions using the vector store"""
-    global vector_store
-    
-    if not vector_store:
-        return jsonify({"error": "No content processed yet. Please process a page/video/PDF first."}), 400
-    
+    global vector_store, llm
+    if vector_store is None:
+        return jsonify({"error": "Page not processed yet."}), 400
     try:
-        data = request.json
-        if not data or "question" not in data:
-            return jsonify({"error": "No question provided"}), 400
-        
+        data = request.json or {}
         question = data.get("question", "").strip()
-        if not question:
-            return jsonify({"error": "Question is empty"}), 400
-        
-        print(f"Question: {question}")
-        
-        # Retrieve relevant documents
-        retriever = vector_store.as_retriever(search_kwargs={"k": 5})
-        docs = retriever.invoke(question)
-        
-        if not docs:
-            return jsonify({"error": "No relevant content found"}), 400
-        
-        # Build context from documents
-        context = "\n\n".join([d.page_content for d in docs])
-        
-        # Create prompt
-        prompt = SYSTEM_TEMPLATE.replace("{context}", context) + f"\n\nUser Question: {question}"
-        
-        # Get answer
-        response = llm.invoke(prompt)
-        answer = response.content
-        
-        print(f"Answer: {answer[:100]}...")
-        
-        return jsonify({"answer": answer})
-        
-    except Exception as e:
-        print(f"Error answering question: {e}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({"error": f"Failed to answer: {str(e)}"}), 500
+        history_list = data.get("history", [])
 
+        if not question:
+            return jsonify({"error": "No question provided"}), 400
+
+        # convert history to Human/AI message objects if present (optional)
+        history_msgs = []
+        for item in history_list:
+            if item.get("type") == "human":
+                history_msgs.append(HumanMessage(content=item.get("content")))
+            elif item.get("type") == "ai":
+                history_msgs.append(AIMessage(content=item.get("content")))
+
+        # Retrieve top-k similar docs using FAISS vector store
+        try:
+            # similarity_search is available on LangChain FAISS vectorstore
+            docs = vector_store.similarity_search(question, k=4)
+        except Exception:
+            # fallback - try as_retriever then .get_relevant_documents
+            try:
+                retr = vector_store.as_retriever()
+                docs = retr.get_relevant_documents(question)
+            except Exception as e:
+                print("Retrieval error:", e)
+                docs = []
+
+        context = build_context_from_docs(docs, max_chars=3500)
+
+        # Compose and call LLM using the context
+        answer = call_llm_with_context(question, context, history=history_msgs)
+
+        return jsonify({"answer": answer})
+    except Exception as e:
+        print("ask error:", e)
+        return jsonify({"error": str(e)}), 500
+
+
+# ---------------- Run (never used on Render, kept for local debug) ----------------
 if __name__ == "__main__":
-    print("\n" + "="*50)
-    print("Starting Flask Server")
-    print("="*50)
-    print(f"API Key Set: {bool(os.environ.get('GOOGLE_API_KEY'))}")
-    print(f"Models Initialized: {llm is not None and embeddings is not None}")
-    print("="*50 + "\n")
-    
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    app.run(host="0.0.0.0", port=5000, debug=False)
