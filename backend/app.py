@@ -155,7 +155,7 @@ def process_webpage():
         return jsonify({"status": "ready", "message": f"Processed {len(text)} characters."})
     except Exception as e:
         print("process_webpage error:", e)
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "An error occurred while processing the webpage.", "details": str(e)}), 500
 
 
 # ---------------- Process YouTube ----------------
