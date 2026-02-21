@@ -67,22 +67,45 @@ def process_webpage():
 def process_youtube():
     global vector_store
     try:
-        video_id = request.json.get("videoId")
-        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
-        try:
-            transcript = transcript_list.find_transcript(['en'])
-        except:
-            transcript = next(iter(transcript_list))
-        
-        raw_text = " ".join([t['text'] for t in transcript.fetch()])
-        english_text = get_english_transcript(raw_text)
-        
-        texts = text_splitter.split_text(english_text)
-        vector_store = FAISS.from_texts(texts, embeddings)
-        return jsonify({"status": "ready"})
-    except Exception as e:
-        return jsonify({"error": f"YouTube Error: {str(e)}"}), 500
+        data = request.json or {}
+        video_id = data.get("videoId", "")
+        if not video_id:
+            return jsonify({"error": "No YouTube Video ID provided"}), 400
 
+        print(f"Fetching transcript for video ID: {video_id}")
+        
+        try:
+            # Get available transcripts
+            transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+            
+            # Try English first, then fallback to anything available
+            try:
+                transcript = transcript_list.find_transcript(['en'])
+            except:
+                transcript = next(iter(transcript_list))
+                
+            transcript_data = transcript.fetch()
+            raw_text = " ".join([t['text'] for t in transcript_data])
+            
+            # Translate if necessary
+            english_text = get_english_transcript(raw_text)
+            
+            # Create vector store
+            texts = text_splitter.split_text(english_text)
+            vector_store = FAISS.from_texts(texts, embeddings)
+            
+            return jsonify({"status": "ready", "message": "YouTube transcript processed."})
+
+        except Exception as transcript_error:
+            # Handle cases where subtitles are disabled or missing
+            print(f"Transcript Error: {transcript_error}")
+            return jsonify({
+                "error": "Subtitles are disabled or unavailable for this video. Try a different video."
+            }), 400
+
+    except Exception as e:
+        print(f"General YouTube processing error: {e}")
+        return jsonify({"error": str(e)}), 500
 @app.route("/process_pdf", methods=["POST"])
 def process_pdf():
     global vector_store
