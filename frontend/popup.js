@@ -45,6 +45,25 @@ function fetchAndProcess(endpoint, body) {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
+
+  // --- Theme Toggle Logic ---
+  const themeToggle = document.getElementById('themeToggle');
+  if (themeToggle) {
+    const themeIcon = themeToggle.querySelector('.theme-icon');
+    const savedTheme = localStorage.getItem('theme') || 'light';
+    document.documentElement.setAttribute('data-theme', savedTheme);
+    if (themeIcon) themeIcon.textContent = savedTheme === 'light' ? '🌙' : '☀️';
+
+    themeToggle.addEventListener('click', () => {
+      const currentTheme = document.documentElement.getAttribute('data-theme');
+      const newTheme = currentTheme === 'light' ? 'dark' : 'light';
+      document.documentElement.setAttribute('data-theme', newTheme);
+      localStorage.setItem('theme', newTheme);
+      if (themeIcon) themeIcon.textContent = newTheme === 'light' ? '🌙' : '☀️';
+    });
+  }
+  // --------------------------
+
   const processButton = document.getElementById('processButton');
   const askButton = document.getElementById('askButton');
   const questionInput = document.getElementById('questionInput');
